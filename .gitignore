@@ -9,3 +9,6 @@ node_modules/
 **/.local-chromium/
 node_modules/
 .local-chromium/
+node_modules
+.local-chromium
+.git

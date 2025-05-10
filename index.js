@@ -1,6 +1,7 @@
 // index.js
 import express from "express";
 import pkg from "whatsapp-web.js";
+import qrcodeTerminal from "qrcode-terminal";
 import QRCode from "qrcode";
 
 const { Client, LocalAuth } = pkg;
@@ -9,51 +10,43 @@ app.use(express.json());
 
 let qrDataUrl = "";
 
-// Fuerza un store limpio en cada deploy
+// Si hay una carpeta ./sessions de runs anteriores, elimínala para forzar QR
 const client = new Client({
-  authStrategy: new LocalAuth({
-    dataPath: "./sessions",      // guarda la sesión aquí
-    clientId: "whatsapp-masivos" // nombre de cliente único
-  }),
+  authStrategy: new LocalAuth({ dataPath: "./sessions" }),
   puppeteer: {
     headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-extensions",
-      "--disable-gpu",
-    ]
-  }
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  },
 });
 
-client.on("qr", async qr => {
+client.on("qr", async (qr) => {
+  // 1) Muestra ASCII en consola
+  qrcodeTerminal.generate(qr, { small: true });
+  console.log("📲 ¡QR generado! Escanéalo con tu móvil.");
+
+  // 2) Guarda DataURL para / ruta
   qrDataUrl = await QRCode.toDataURL(qr);
-  console.log("📲 QR generado, visita / para escanearlo");
 });
 
 client.on("ready", () => {
-  console.log("✅ WhatsApp Web listo, ya no hace falta QR");
-  qrDataUrl = ""; // opcional: limpia el QR una vez conectado
+  console.log("✅ WhatsApp Web listo, ya no hace falta QR.");
+  qrDataUrl = ""; // opcional: limpia el QR
 });
 
 client.initialize();
 
-// Ruta para mostrar el QR
+// Servir el QR en el navegador
 app.get("/", (req, res) => {
   if (!qrDataUrl) {
-    return res.send(`
-      <h2>QR no disponible</h2>
-      <p>Espera unos segundos y refresca esta página.</p>
-    `);
+    return res.send(`<h3>No hay QR disponible<br>Espera unos segundos y refresca.</h3>`);
   }
   res.send(`
-    <h2>Escanea este QR con tu móvil</h2>
+    <h3>Escanea este QR</h3>
     <img src="${qrDataUrl}" style="max-width:300px;" />
   `);
 });
 
-// Endpoint para enviar mensajes
+// API para enviar mensajes
 app.post("/enviar", async (req, res) => {
   const { numero, mensaje } = req.body;
   try {
@@ -65,4 +58,4 @@ app.post("/enviar", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Servidor arrancado en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Servidor en puerto ${PORT}`));
