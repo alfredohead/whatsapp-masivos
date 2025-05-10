@@ -1,9 +1,10 @@
 services:
   - type: web
     name: whatsapp-masivos
-    env: node
-    region: oregon         # o tu región más cercana
-    branch: main           # la rama que quieres desplegar
-    buildCommand: npm install
-    startCommand: npm start
-    plan: free             # si quieres el plan gratuito
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: "3000"

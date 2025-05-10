@@ -1,13 +1,13 @@
 // index.js
 import express from "express";
 import pkg from "whatsapp-web.js";
-const { Client, LocalAuth } = pkg;
 import qrcode from "qrcode";
 
+const { Client, LocalAuth } = pkg;
 const app = express();
 app.use(express.json());
 
-let qrCodeDataUrl = null;
+let qrDataUrl = "";
 
 const client = new Client({
   authStrategy: new LocalAuth(),
@@ -16,61 +16,44 @@ const client = new Client({
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
-      // Estas flags ayudan en entornos como Fly/Render
-    ],
-  },
+      "--disable-dev-shm-usage",
+      "--disable-extensions",
+      "--disable-gpu",
+    ]
+  }
 });
 
-// Al recibir el QR, lo convertimos a data-URL
-client.on("qr", async (qr) => {
-  qrCodeDataUrl = await qrcode.toDataURL(qr);
-  console.log("📲 QR generado, visita / para verlo");
+client.on("qr", async qr => {
+  qrDataUrl = await qrcode.toDataURL(qr);
+  console.log("📲 QR generado, visita / para escanearlo");
 });
 
 client.on("ready", () => {
-  console.log("✅ WhatsApp listo");
+  console.log("✅ WhatsApp Web listo");
+  qrDataUrl = ""; 
 });
 
-// Inicializamos el cliente
 client.initialize();
 
-// Ruta principal que muestra el QR
 app.get("/", (req, res) => {
+  if (!qrDataUrl) {
+    return res.send(`<h2>QR no disponible</h2><p>Espera un momento y refresca.</p>`);
+  }
   res.send(`
-    <!DOCTYPE html>
-    <html lang="es">
-    <head>
-      <meta charset="UTF-8" />
-      <title>WhatsApp Masivos</title>
-      <style>
-        body { display: flex; flex-direction: column; align-items: center; padding: 50px; font-family: sans-serif; }
-        img { max-width: 300px; }
-      </style>
-    </head>
-    <body>
-      <h1>Escanea el QR con tu WhatsApp</h1>
-      ${qrCodeDataUrl
-        ? `<img src="${qrCodeDataUrl}" alt="QR de WhatsApp" />`
-        : `<p>Generando QR, espera unos segundos...</p>`}
-    </body>
-    </html>
+    <h2>Escanea este QR</h2>
+    <img src="${qrDataUrl}" style="max-width:300px;" />
   `);
 });
 
-// Endpoint para enviar mensajes
 app.post("/enviar", async (req, res) => {
   const { numero, mensaje } = req.body;
   try {
     await client.sendMessage(`${numero}@c.us`, mensaje);
     res.json({ status: "0", message: "Mensaje enviado" });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ status: "-1", message: error.message });
+  } catch (e) {
+    res.status(500).json({ status: "-1", message: e.message });
   }
 });
 
-// Ponemos a escuchar en el puerto 3000
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Servidor activo en puerto ${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚀 Servidor en puerto ${PORT}`));
