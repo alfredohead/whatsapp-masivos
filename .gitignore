@@ -7,3 +7,5 @@ node_modules/
 
 # Chromium descargado por Puppeteer
 **/.local-chromium/
+node_modules/
+.local-chromium/
