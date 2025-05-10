@@ -1,8 +1,9 @@
-# render.yaml
 services:
   - type: web
     name: whatsapp-masivos
     env: node
-    plan: free
-    buildCommand: "npm install"
-    startCommand: "npm start"
+    region: oregon         # o tu región más cercana
+    branch: main           # la rama que quieres desplegar
+    buildCommand: npm install
+    startCommand: npm start
+    plan: free             # si quieres el plan gratuito
