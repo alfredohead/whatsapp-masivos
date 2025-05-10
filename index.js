@@ -1,3 +1,6 @@
+// =======================
+// index.js (Node.js Backend)
+// =======================
 import express from 'express';
 import pkg from 'whatsapp-web.js';
 import qrcodeTerminal from 'qrcode-terminal';
@@ -5,13 +8,12 @@ import QRCode from 'qrcode';
 
 const { Client, LocalAuth } = pkg;
 const app = express();
+app.use(express.json());  // JSON middleware
 
-// Middleware JSON
-app.use(express.json());
-
-// Inicializar cliente de WhatsApp
 let qrDataUrl = '';
 let isReady = false;
+
+// Initialize WhatsApp client
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: './sessions' }),
   puppeteer: {
@@ -20,7 +22,7 @@ const client = new Client({
   },
 });
 
-// Espera readiness con timeout reducido
+// Wait until ready (auth/ready) with timeout
 function waitForReady(timeout = 10000) {
   return new Promise(resolve => {
     if (isReady) return resolve(true);
@@ -38,103 +40,82 @@ function waitForReady(timeout = 10000) {
   });
 }
 
-// Eventos del cliente
+// QR event
 client.on('qr', async qr => {
   qrcodeTerminal.generate(qr, { small: true });
-  console.log('📲 QR generado, escanéalo con tu móvil');
-  try {
-    qrDataUrl = await QRCode.toDataURL(qr);
-  } catch (err) {
-    console.error('Error generando DataURL del QR:', err);
-  }
+  try { qrDataUrl = await QRCode.toDataURL(qr); } catch {};
+  console.log('📲 QR generated');
 });
-client.on('authenticated', session => {
-  console.log('🔒 Sesión autenticada.');
-  isReady = true;
-  qrDataUrl = '';
-});
-client.on('ready', () => {
-  console.log('✅ WhatsApp Web listo.');
-  isReady = true;
-});
-client.on('auth_failure', msg => {
-  console.error('Error de autenticación:', msg);
-  isReady = false;
-});
-client.on('disconnected', reason => {
-  console.warn('Cliente desconectado, reiniciando...', reason);
-  isReady = false;
-  client.initialize();
-});
+client.on('authenticated', () => { isReady = true; qrDataUrl = ''; console.log('🔒 Authenticated'); });
+client.on('ready', () => { isReady = true; console.log('✅ Ready'); });
+client.on('auth_failure', msg => { isReady = false; console.error('Auth failure', msg); });
+client.on('disconnected', reason => { isReady = false; console.warn('Disconnected', reason); client.initialize(); });
 client.initialize();
 
-// Rutas de servicio
+// Serve QR HTML
 app.get('/', (req, res) => {
-  if (!qrDataUrl) return res.send('<h3>No hay QR disponible. Refresca en unos segundos.</h3>');
-  res.send(`
-    <h3>Escanea este QR con WhatsApp</h3>
-    <img src="${qrDataUrl}" style="max-width:300px;" />
-  `);
+  if (!qrDataUrl) return res.send('<h3>No QR yet. Refresh soon.</h3>');
+  res.send(`<h3>Scan QR</h3><img src="${qrDataUrl}" style="max-width:300px;"/>`);
 });
-app.get('/ping', (req, res) => res.status(200).send('pong'));
-app.get('/status', (req, res) => res.status(200).json({ active: isReady }));
 
-// Enviar un solo mensaje (sin sendSeen)
-app.post('/enviar', async (req, res) => {
-  const ready = await waitForReady();
-  if (!ready) return res.status(503).json({ error: 'Cliente no listo. Escanea QR y espera.' });
+// Health
+app.get('/ping', (req, res) => res.send('pong'));
+// Status
+app.get('/status', (req, res) => res.json({ active: isReady }));
+// Generate new QR
+app.get('/generateQr', async (req, res) => {
   try {
-    const { numero, mensaje } = req.body;
-    if (!numero || !mensaje) return res.status(400).json({ error: 'numero y mensaje son requeridos' });
-    const cleaned = numero.replace(/\D/g, '');
-    const chatId = numero.includes('@c.us') || numero.includes('@g.us') ? numero : `${cleaned}@c.us`;
-    // Enviar mensaje sin sendSeen para evitar errores de contexto
-    await client.sendMessage(chatId, mensaje, { sendSeen: false });
-    return res.status(200).json({ success: true, chatId });
+    await client.logout(); isReady = false; qrDataUrl = '';
+    client.initialize();
+    res.json({ message: 'New QR requested' });
   } catch (err) {
-    console.error('Error POST /enviar:', err);
-    if (err.message.includes('Execution context was destroyed')) {
-      return res.status(502).json({ error: 'ProtocolError', details: err.message });
-    }
-    if (err.message.includes('invalid wid')) {
-      return res.status(400).json({ error: 'Invalid WhatsApp ID', details: err.message });
-    }
-    return res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Failed to generate new QR', details: err.message });
   }
 });
 
-// Enviar lote en paralelo (batch) sin sendSeen
-app.post('/enviarBatch', async (req, res) => {
-  const ready = await waitForReady();
-  if (!ready) return res.status(503).json({ error: 'Cliente no listo. Escanea QR y espera.' });
-  const batch = req.body;
-  if (!Array.isArray(batch) || batch.length === 0) return res.status(400).json({ error: 'Se necesita un array de mensajes' });
+// Send single
+app.post('/enviar', async (req, res) => {
+  if (!await waitForReady()) return res.status(503).json({ error: 'Client not ready' });
+  try {
+    const { numero, mensaje } = req.body;
+    if (!numero || !mensaje) return res.status(400).json({ error: 'numero and mensaje required' });
+    const cleaned = numero.replace(/\D/g,'');
+    const chatId = numero.includes('@c.us')||numero.includes('@g.us')? numero : `${cleaned}@c.us`;
+    await client.sendMessage(chatId, mensaje, { sendSeen: false });
+    res.json({ success: true, chatId });
+  } catch (err) {
+    const msg = err.message;
+    if (msg.includes('Execution context was destroyed')) return res.status(502).json({ error: 'ProtocolError', details: msg });
+    if (msg.includes('invalid wid')) return res.status(400).json({ error: 'Invalid WhatsApp ID', details: msg });
+    res.status(500).json({ error: msg });
+  }
+});
 
+// Send batch
+app.post('/enviarBatch', async (req, res) => {
+  if (!await waitForReady()) return res.status(503).json({ error: 'Client not ready' });
+  const batch = req.body;
+  if (!Array.isArray(batch) || !batch.length) return res.status(400).json({ error: 'Array required' });
   const results = await Promise.all(batch.map(async item => {
     try {
       const { numero, mensaje } = item;
-      if (!numero || !mensaje) throw new Error('numero y mensaje son requeridos');
-      const cleaned = numero.replace(/\D/g, '');
-      const chatId = numero.includes('@c.us') || numero.includes('@g.us') ? numero : `${cleaned}@c.us`;
-      // Enviar mensaje sin sendSeen
+      if (!numero||!mensaje) throw new Error('numero and mensaje required');
+      const clean = numero.replace(/\D/g,'');
+      const chatId = numero.includes('@c.us')||numero.includes('@g.us')? numero : `${clean}@c.us`;
       await client.sendMessage(chatId, mensaje, { sendSeen: false });
       return { numero, status: 'OK' };
-    } catch (err) {
-      console.error('Error batch item:', err);
-      return { numero: item.numero || null, status: 'ERROR', error: err.message };
+    } catch (e) {
+      return { numero: item.numero||null, status: 'ERROR', error: e.message };
     }
   }));
-
-  const last = results[results.length - 1] || null;
-  return res.status(200).json({ results, last });
+  res.json({ results, last: results.slice(-1)[0] });
 });
 
-// Manejo 404 y errores
-app.use((req, res) => res.status(404).json({ error: 'Ruta no encontrada' }));
-app.use((err, req, res, next) => {
-  console.error('Error interno:', err);
-  res.status(500).json({ error: 'Servidor error' });
-});
+// 404
+app.use((req,res)=>res.status(404).json({error:'Not Found'}));
+// Errors
+app.use((err,req,res,next)=>{console.error(err);res.status(500).json({error:'Server error'});});
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Servidor escuchando en puerto ${PORT}`));
+// Start
+const PORT = process.env.PORT||3000;
+app.listen(PORT,()=>console.log(`🚀 Listening ${PORT}`));
