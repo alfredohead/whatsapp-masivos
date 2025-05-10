@@ -11,6 +11,7 @@ app.use(express.json());
 
 // Inicializar cliente de WhatsApp
 let qrDataUrl = '';
+let isReady = false;
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: './sessions' }),
   puppeteer: {
@@ -32,10 +33,17 @@ client.on('qr', async (qr) => {
 client.on('ready', () => {
   console.log('✅ WhatsApp Web listo.');
   qrDataUrl = '';
+  isReady = true;
 });
 
 client.on('auth_failure', (msg) => {
   console.error('Error de autenticación:', msg);
+});
+
+client.on('disconnected', (reason) => {
+  console.warn('Cliente desconectado, reiniciando...', reason);
+  isReady = false;
+  client.initialize();
 });
 
 client.initialize();
@@ -46,10 +54,10 @@ app.get('/', (req, res) => {
   if (!qrDataUrl) {
     return res.send('<h3>No hay QR disponible, espera unos segundos y refresca.</h3>');
   }
-  res.send(
-    `<h3>Escanea este QR con WhatsApp</h3>
-    <img src="${qrDataUrl}" style="max-width:300px;" />`
-  );
+  res.send(`
+    <h3>Escanea este QR con WhatsApp</h3>
+    <img src="${qrDataUrl}" style="max-width:300px;" />
+  `);
 });
 
 // Endpoint de salud
@@ -59,9 +67,11 @@ app.get('/ping', (req, res) => {
 
 // Enviar mensaje
 app.post('/enviar', async (req, res) => {
+  if (!isReady) {
+    return res.status(503).json({ error: 'WhatsApp client not ready. Please try again shortly.' });
+  }
   try {
     const { numero, mensaje } = req.body;
-    // Validación básica de entrada
     if (!numero || !mensaje || typeof numero !== 'string' || typeof mensaje !== 'string') {
       return res.status(400).json({ error: 'numero y mensaje son requeridos y deben ser strings' });
     }
@@ -78,7 +88,6 @@ app.post('/enviar', async (req, res) => {
     return res.status(200).json({ success: true, message: 'Mensaje enviado', chatId });
   } catch (err) {
     console.error('Error en POST /enviar:', err);
-    // Error de ID inválido
     if (err.message && err.message.includes('invalid wid')) {
       return res.status(400).json({ error: 'Invalid WhatsApp ID', details: err.message });
     }
