@@ -83,9 +83,8 @@ app.get('/ping', (req, res) => {
   res.status(200).send('pong');
 });
 
-// Enviar mensaje
+// Enviar un solo mensaje
 app.post('/enviar', async (req, res) => {
-  // Esperar hasta 30s a que el cliente esté listo
   const ready = await waitForReady(30000);
   if (!ready) {
     return res.status(503).json({ error: 'WhatsApp client not ready after waiting. Please scan QR and try again.' });
@@ -96,14 +95,12 @@ app.post('/enviar', async (req, res) => {
       return res.status(400).json({ error: 'numero y mensaje son requeridos y deben ser strings' });
     }
 
-    // Limpiar y formatear número
     const cleaned = numero.replace(/\D/g, '');
     const chatId = numero.includes('@c.us') || numero.includes('@g.us')
       ? numero
       : `${cleaned}@c.us`;
     console.log(`📨 Enviando mensaje a chatId: ${chatId}`);
 
-    // Enviar mensaje
     await client.sendMessage(chatId, mensaje);
     return res.status(200).json({ success: true, message: 'Mensaje enviado', chatId });
   } catch (err) {
@@ -113,6 +110,38 @@ app.post('/enviar', async (req, res) => {
     }
     return res.status(500).json({ error: err.message || 'Error interno del servidor' });
   }
+});
+
+// Enviar lote de mensajes en paralelo
+app.post('/enviarBatch', async (req, res) => {
+  const ready = await waitForReady(30000);
+  if (!ready) {
+    return res.status(503).json({ error: 'WhatsApp client not ready after waiting. Please scan QR and try again.' });
+  }
+  const batch = req.body;
+  if (!Array.isArray(batch) || batch.length === 0) {
+    return res.status(400).json({ error: 'Se necesita un array de mensajes' });
+  }
+
+  const results = await Promise.all(batch.map(async item => {
+    try {
+      const { numero, mensaje } = item;
+      if (!numero || !mensaje || typeof numero !== 'string' || typeof mensaje !== 'string') {
+        throw new Error('numero y mensaje son requeridos y deben ser strings');
+      }
+      const cleaned = numero.replace(/\D/g, '');
+      const chatId = numero.includes('@c.us') || numero.includes('@g.us')
+        ? numero
+        : `${cleaned}@c.us`;
+      await client.sendMessage(chatId, mensaje);
+      return { numero, status: 'OK', chatId };
+    } catch (err) {
+      console.error('Error en batch item:', item, err);
+      return { numero: item.numero || null, status: 'ERROR', error: err.message };
+    }
+  }));
+
+  return res.status(200).json({ results });
 });
 
 // Manejo de rutas no encontradas
