@@ -2,3 +2,8 @@ node_modules/
 *.log
 .env
 sesion/
+# dependencias de Node
+node_modules/
+
+# Chromium descargado por Puppeteer
+**/.local-chromium/
