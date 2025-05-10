@@ -1,0 +1,8 @@
+# render.yaml
+services:
+  - type: web
+    name: whatsapp-masivos
+    env: node
+    plan: free
+    buildCommand: "npm install"
+    startCommand: "npm start"
