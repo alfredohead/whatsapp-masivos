@@ -141,7 +141,8 @@ app.post('/enviarBatch', async (req, res) => {
     }
   }));
 
-  return res.status(200).json({ results });
+  const last = results[results.length - 1] || null;
+  return res.status(200).json({ results, last });
 });
 
 // Manejo de rutas no encontradas
