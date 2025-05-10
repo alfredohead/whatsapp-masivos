@@ -20,7 +20,7 @@ const client = new Client({
   },
 });
 
-// Espera readiness (auth o ready) con timeout reducido a 10s para respuesta más rápida
+// Espera readiness con timeout reducido
 function waitForReady(timeout = 10000) {
   return new Promise(resolve => {
     if (isReady) return resolve(true);
@@ -42,35 +42,33 @@ function waitForReady(timeout = 10000) {
 client.on('qr', async qr => {
   qrcodeTerminal.generate(qr, { small: true });
   console.log('📲 QR generado, escanéalo con tu móvil');
-  try { qrDataUrl = await QRCode.toDataURL(qr); } 
-  catch (err) { console.error('Error generando DataURL del QR:', err); }
+  try {
+    qrDataUrl = await QRCode.toDataURL(qr);
+  } catch (err) {
+    console.error('Error generando DataURL del QR:', err);
+  }
 });
-
 client.on('authenticated', session => {
   console.log('🔒 Sesión autenticada.');
   isReady = true;
   qrDataUrl = '';
 });
-
 client.on('ready', () => {
   console.log('✅ WhatsApp Web listo.');
   isReady = true;
 });
-
 client.on('auth_failure', msg => {
   console.error('Error de autenticación:', msg);
   isReady = false;
 });
-
 client.on('disconnected', reason => {
   console.warn('Cliente desconectado, reiniciando...', reason);
   isReady = false;
   client.initialize();
 });
-
 client.initialize();
 
-// Rutas
+// Rutas de servicio
 app.get('/', (req, res) => {
   if (!qrDataUrl) return res.send('<h3>No hay QR disponible. Refresca en unos segundos.</h3>');
   res.send(`
@@ -78,14 +76,10 @@ app.get('/', (req, res) => {
     <img src="${qrDataUrl}" style="max-width:300px;" />
   `);
 });
-
-// Salud
 app.get('/ping', (req, res) => res.status(200).send('pong'));
-
-// Estado rápido: true en cuanto está autenticado o listo
 app.get('/status', (req, res) => res.status(200).json({ active: isReady }));
 
-// Enviar un solo mensaje
+// Enviar un solo mensaje (sin sendSeen)
 app.post('/enviar', async (req, res) => {
   const ready = await waitForReady();
   if (!ready) return res.status(503).json({ error: 'Cliente no listo. Escanea QR y espera.' });
@@ -93,9 +87,9 @@ app.post('/enviar', async (req, res) => {
     const { numero, mensaje } = req.body;
     if (!numero || !mensaje) return res.status(400).json({ error: 'numero y mensaje son requeridos' });
     const cleaned = numero.replace(/\D/g, '');
-    const chatId = numero.includes('@c.us') || numero.includes('@g.us')
-      ? numero : `${cleaned}@c.us`;
-    await client.sendMessage(chatId, mensaje);
+    const chatId = numero.includes('@c.us') || numero.includes('@g.us') ? numero : `${cleaned}@c.us`;
+    // Enviar mensaje sin sendSeen para evitar errores de contexto
+    await client.sendMessage(chatId, mensaje, { sendSeen: false });
     return res.status(200).json({ success: true, chatId });
   } catch (err) {
     console.error('Error POST /enviar:', err);
@@ -109,7 +103,7 @@ app.post('/enviar', async (req, res) => {
   }
 });
 
-// Enviar lote en paralelo (batch)
+// Enviar lote en paralelo (batch) sin sendSeen
 app.post('/enviarBatch', async (req, res) => {
   const ready = await waitForReady();
   if (!ready) return res.status(503).json({ error: 'Cliente no listo. Escanea QR y espera.' });
@@ -121,9 +115,9 @@ app.post('/enviarBatch', async (req, res) => {
       const { numero, mensaje } = item;
       if (!numero || !mensaje) throw new Error('numero y mensaje son requeridos');
       const cleaned = numero.replace(/\D/g, '');
-      const chatId = numero.includes('@c.us') || numero.includes('@g.us')
-        ? numero : `${cleaned}@c.us`;
-      await client.sendMessage(chatId, mensaje);
+      const chatId = numero.includes('@c.us') || numero.includes('@g.us') ? numero : `${cleaned}@c.us`;
+      // Enviar mensaje sin sendSeen
+      await client.sendMessage(chatId, mensaje, { sendSeen: false });
       return { numero, status: 'OK' };
     } catch (err) {
       console.error('Error batch item:', err);
@@ -131,11 +125,11 @@ app.post('/enviarBatch', async (req, res) => {
     }
   }));
 
-  const last = results[results.length - 1];
+  const last = results[results.length - 1] || null;
   return res.status(200).json({ results, last });
 });
 
-// 404 y errores
+// Manejo 404 y errores
 app.use((req, res) => res.status(404).json({ error: 'Ruta no encontrada' }));
 app.use((err, req, res, next) => {
   console.error('Error interno:', err);
