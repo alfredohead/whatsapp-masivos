@@ -6,8 +6,7 @@ import QRCode from 'qrcode';
 const { Client, LocalAuth } = pkg;
 const app = express();
 
-// Middlewares
-app.use(express.json());
+// Middlewares\ napp.use(express.json());
 
 // Inicializar cliente de WhatsApp
 let qrDataUrl = '';
@@ -105,6 +104,10 @@ app.post('/enviar', async (req, res) => {
     return res.status(200).json({ success: true, message: 'Mensaje enviado', chatId });
   } catch (err) {
     console.error('Error en POST /enviar:', err);
+    // Manejo específico de ProtocolError de Puppeteer
+    if (err.message && err.message.includes('Execution context was destroyed')) {
+      return res.status(502).json({ error: 'ProtocolError', details: err.message });
+    }
     if (err.message && err.message.includes('invalid wid')) {
       return res.status(400).json({ error: 'Invalid WhatsApp ID', details: err.message });
     }
@@ -137,6 +140,10 @@ app.post('/enviarBatch', async (req, res) => {
       return { numero, status: 'OK', chatId };
     } catch (err) {
       console.error('Error en batch item:', item, err);
+      // Capturar ProtocolError específico
+      if (err.message && err.message.includes('Execution context was destroyed')) {
+        return { numero: item.numero || null, status: 'ERROR', error: 'ProtocolError', details: err.message };
+      }
       return { numero: item.numero || null, status: 'ERROR', error: err.message };
     }
   }));
