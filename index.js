@@ -20,6 +20,24 @@ const client = new Client({
   },
 });
 
+// Función para esperar readiness con timeout
+function waitForReady(timeout = 30000) {
+  return new Promise(resolve => {
+    if (isReady) return resolve(true);
+    const interval = setInterval(() => {
+      if (isReady) {
+        clearInterval(interval);
+        clearTimeout(timer);
+        resolve(true);
+      }
+    }, 500);
+    const timer = setTimeout(() => {
+      clearInterval(interval);
+      resolve(false);
+    }, timeout);
+  });
+}
+
 client.on('qr', async (qr) => {
   qrcodeTerminal.generate(qr, { small: true });
   console.log('📲 QR generado, escanéalo con tu móvil');
@@ -67,8 +85,10 @@ app.get('/ping', (req, res) => {
 
 // Enviar mensaje
 app.post('/enviar', async (req, res) => {
-  if (!isReady) {
-    return res.status(503).json({ error: 'WhatsApp client not ready. Please try again shortly.' });
+  // Esperar hasta 30s a que el cliente esté listo
+  const ready = await waitForReady(30000);
+  if (!ready) {
+    return res.status(503).json({ error: 'WhatsApp client not ready after waiting. Please scan QR and try again.' });
   }
   try {
     const { numero, mensaje } = req.body;
