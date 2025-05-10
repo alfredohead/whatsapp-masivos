@@ -2,3 +2,6 @@ node_modules/
 *.log
 .env
 sesion/
+node_modules
+sessions
+.git
