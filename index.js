@@ -1,4 +1,4 @@
-// index.js (Servidor Node.js)
+// index.js (Servidor Node.js mejorado)
 import express from 'express';
 import pkg from 'whatsapp-web.js';
 import qrcodeTerminal from 'qrcode-terminal';
@@ -6,12 +6,14 @@ import QRCode from 'qrcode';
 
 const { Client, LocalAuth } = pkg;
 const app = express();
-app.use(express.json());
+
+// Permitir JSON grandes si envías muchos mensajes
+app.use(express.json({ limit: '5mb' }));
 
 let qrDataUrl = '';
 let isReady = false;
 
-// Inicializar cliente WhatsApp Web
+// Inicializar WhatsApp Web client
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: './sessions' }),
   puppeteer: {
@@ -20,7 +22,6 @@ const client = new Client({
   },
 });
 
-// Función para esperar readiness con timeout
 function waitForReady(timeout = 10000) {
   return new Promise(resolve => {
     if (isReady) return resolve(true);
@@ -44,43 +45,38 @@ client.on('qr', async qr => {
   try {
     qrDataUrl = await QRCode.toDataURL(qr);
   } catch (e) {
-    console.error('Error QR DataURL:', e);
+    console.error('Error al generar DataURL del QR:', e);
   }
   console.log('📲 QR generado');
 });
-
 client.on('authenticated', () => {
   isReady = true;
   qrDataUrl = '';
   console.log('🔒 Sesión autenticada');
 });
-
 client.on('ready', () => {
   isReady = true;
-  console.log('✅ WhatsApp Web listo');
+  console.log('✅ Cliente listo');
 });
-
 client.on('auth_failure', msg => {
   isReady = false;
-  console.error('❌ Error autenticación:', msg);
+  console.error('❌ Falló autenticación:', msg);
 });
-
 client.on('disconnected', reason => {
   isReady = false;
   console.warn('⚠️ Desconectado:', reason);
   client.initialize();
 });
-
 client.initialize();
 
-// Rutas de servicio
+// Rutas
 app.get('/', (req, res) => {
   if (!qrDataUrl) {
     return res.send('<h3>No hay QR disponible. Recarga en unos segundos.</h3>');
   }
   res.send(`
     <h3>Escanea este QR con WhatsApp</h3>
-    <img src="${qrDataUrl}" style="max-width:300px;"/>
+    <img src="${qrDataUrl}" style="max-width:300px;" />
   `);
 });
 
@@ -89,6 +85,7 @@ app.get('/ping', (req, res) => res.send('pong'));
 app.get('/status', (req, res) => res.json({ activo: isReady }));
 
 app.get('/generateQr', async (req, res) => {
+  console.log('🔔 Solicitud de nuevo QR');
   try {
     await client.logout();
     isReady = false;
@@ -96,11 +93,13 @@ app.get('/generateQr', async (req, res) => {
     client.initialize();
     res.json({ mensaje: 'Nuevo QR solicitado' });
   } catch (err) {
+    console.error('Error en /generateQr:', err);
     res.status(500).json({ error: 'Error al generar nuevo QR', detalles: err.message });
   }
 });
 
 app.post('/enviar', async (req, res) => {
+  console.log('🔔 POST /enviar body:', req.body);
   if (!await waitForReady()) {
     return res.status(503).json({ error: 'Cliente no listo. Escanea el QR y espera.' });
   }
@@ -114,6 +113,7 @@ app.post('/enviar', async (req, res) => {
     await client.sendMessage(chatId, mensaje, { sendSeen: false });
     res.json({ exito: true, chatId });
   } catch (err) {
+    console.error('Error en /enviar:', err);
     const m = err.message;
     if (m.includes('Execution context was destroyed')) {
       return res.status(502).json({ error: 'ProtocolError', detalles: m });
@@ -126,6 +126,7 @@ app.post('/enviar', async (req, res) => {
 });
 
 app.post('/enviarBatch', async (req, res) => {
+  console.log(`🔔 POST /enviarBatch — ${Array.isArray(req.body) ? req.body.length : 'N/A'} ítems`);
   if (!await waitForReady()) {
     return res.status(503).json({ error: 'Cliente no listo. Escanea el QR y espera.' });
   }
@@ -133,6 +134,8 @@ app.post('/enviarBatch', async (req, res) => {
   if (!Array.isArray(lote) || lote.length === 0) {
     return res.status(400).json({ error: 'Se requiere un array de mensajes' });
   }
+
+  // Envío en paralelo (o podrías refactorizar a secuencial + delay si tu API lo exige)
   const resultados = await Promise.all(lote.map(async item => {
     try {
       const { numero, mensaje } = item;
@@ -142,19 +145,21 @@ app.post('/enviarBatch', async (req, res) => {
       await client.sendMessage(chatId, mensaje, { sendSeen: false });
       return { numero, estado: 'OK' };
     } catch (err) {
+      console.error('Error enviando a', item.numero, err);
       return { numero: item.numero || null, estado: 'ERROR', error: err.message };
     }
   }));
+
   res.json({ resultados, ultimo: resultados.slice(-1)[0] });
 });
 
-// Manejadores de errores
+// 404 y handler global
 app.use((req, res) => res.status(404).json({ error: 'Ruta no encontrada' }));
 app.use((err, req, res, next) => {
-  console.error('Error servidor:', err);
+  console.error('❌ Error del servidor:', err);
   res.status(500).json({ error: 'Error del servidor' });
 });
 
-// Iniciar servidor
+// Levantar servidor
 const PUERTO = process.env.PORT || 3000;
-app.listen(PUERTO, () => console.log(`🚀 Servidor escuchando en puerto ${PUERTO}`));
+app.listen(PUERTO, () => console.log(`🚀 Servidor en puerto ${PUERTO}`));
