@@ -1,96 +1,147 @@
-// index.js
-// Servidor Express + WhatsApp Web.js con manejo automático de sesión
-
+// index.js (o index_asincrono.js) - con QR en web, emojis 🚀 y endpoint /status
 import 'dotenv/config';
-import express from 'express';
 import axios from 'axios';
-import { Client } from 'whatsapp-web.js';
-import qrcode from 'qrcode-terminal';
-import fs from 'fs';
+import qrcode from 'qrcode';
+import http from 'http';
+import express from 'express';
+import { Server as SocketIOServer } from 'socket.io';
+import { Client, LocalAuth } from 'whatsapp-web.js';
 
-// Ruta donde se guardará la sesión de WhatsApp
-const SESSION_FILE_PATH = './session.json';
+// 🚀 Variables de entorno
+const APPS_SCRIPT_WEBHOOK_URL    = process.env.APPS_SCRIPT_WEBHOOK_URL;
+const APPS_SCRIPT_WEBHOOK_SECRET = process.env.APPS_SCRIPT_WEBHOOK_SECRET;
 
-// 1️⃣ Carga la sesión si ya existe
-let sessionData = {};
-if (fs.existsSync(SESSION_FILE_PATH)) {
-  try {
-    sessionData = JSON.parse(fs.readFileSync(SESSION_FILE_PATH, 'utf8'));
-  } catch (err) {
-    console.error('❌ Error leyendo session.json:', err);
-    sessionData = {};
-  }
-}
+// 🔌 Inicializar servidor HTTP + Express + Socket.IO
+const app    = express();
+const server = http.createServer(app);
+const io     = new SocketIOServer(server);
 
-// 2️⃣ Inicializa el cliente con los datos de sesión (vacío la primera vez)
-const client = new Client({ session: sessionData });
+// 🌐 Mantener estado de conexión
+let isClientReady = false;
 
-// 3️⃣ Eventos de sesión
+// 📲 Cliente WhatsApp
+const client = new Client({ authStrategy: new LocalAuth({ dataPath: './session' }) });
+
+// 📄 Servir página principal con QR dinámico
+app.get('/', (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <title>WhatsApp QR</title>
+      <style>
+        body { display:flex; flex-direction:column; align-items:center; font-family:sans-serif; margin-top:50px; }
+        #qr img { width:300px; }
+      </style>
+    </head>
+    <body>
+      <h1>📲 Escanea el QR con WhatsApp Web</h1>
+      <div id="qr">⏳ Esperando QR...</div>
+      <p id="status">Estado: inicializando...</p>
+      <script src="/socket.io/socket.io.js"></script>
+      <script>
+        const socket = io();
+        socket.on('qr', qr => {
+          document.getElementById('qr').innerHTML = `<img src="${qr}" />`;
+          document.getElementById('status').innerText = '📥 QR recibido: ¡Escanea con tu móvil!';
+        });
+        socket.on('ready', () => {
+          document.getElementById('status').innerText = '✅ WhatsApp conectado';
+        });
+        socket.on('authenticated', () => {
+          document.getElementById('status').innerText = '🔐 Autenticado correctamente';
+        });
+        socket.on('auth_failure', msg => {
+          document.getElementById('status').innerText = '🚨 Error de autenticación: ' + msg;
+        });
+      </script>
+    </body>
+    </html>
+  `);
+});
+
+// 📡 Endpoint de estado
+app.get('/status', (req, res) => {
+  res.json({ connected: isClientReady });
+});
+
+io.on('connection', () => console.log('🔌 Frontend conectado a Socket.IO'));
+
+// 🌟 Eventos de WhatsApp Web.js
 client.on('qr', qr => {
-  console.log('🔎 Escanea este QR con tu WhatsApp:');
-  qrcode.generate(qr, { small: true });
-});
-
-client.on('authenticated', session => {
-  console.log('✅ Autenticado correctamente');
-  fs.writeFileSync(SESSION_FILE_PATH, JSON.stringify(session), 'utf8');
-  console.log('💾 session.json guardado');
-});
-
-client.on('auth_failure', msg => {
-  console.error('❌ Falló la autenticación:', msg);
-  // Borra session para forzar re-login
-  if (fs.existsSync(SESSION_FILE_PATH)) fs.unlinkSync(SESSION_FILE_PATH);
+  console.log('📸 QR recibido');
+  qrcode.toDataURL(qr, (err, url) => {
+    if (err) return console.error('❌ Error generando QR:', err);
+    io.emit('qr', url);
+  });
 });
 
 client.on('ready', () => {
-  console.log('🚀 WhatsApp Client listo');
+  isClientReady = true;
+  console.log('✅ Cliente WhatsApp listo');
+  io.emit('ready');
 });
 
-// Inicia la conexión con WhatsApp
+client.on('authenticated', () => {
+  console.log('🔐 Autenticado');
+  io.emit('authenticated');
+});
+
+client.on('auth_failure', msg => {
+  isClientReady = false;
+  console.error('🚨 Auth failure:', msg);
+  io.emit('auth_failure', msg);
+});
+
 client.initialize();
 
-// 4️⃣ Configuración de Express
-const app = express();
-// Aumentamos límite para cuerpos JSON grandes
-app.use(express.json({ limit: '10mb' }));
+/**
+ * 🚀 Procesa un lote de envíos en segundo plano y notifica a Apps Script
+ * @param {Array<{ numero: string, mensaje: string }>} mensajes
+ */
+async function procesarLoteEnSegundoPlano(mensajes) {
+  console.log(`📨 Iniciando procesamiento de lote: ${mensajes.length} mensajes`);
+  const resultados = [];
 
-// 5️⃣ Ruta para recibir lotes desde Apps Script
-app.post('/enviarBatch', (req, res) => {
-  const { lote, callbackUrl } = req.body;
-  console.log(`🔔 Recibido lote de ${lote.length} mensajes → callback: ${callbackUrl}`);
-
-  // Respuesta inmediata para no bloquear la petición
-  res.json({ status: 'accepted', count: lote.length });
-
-  // Procesamiento asíncrono de envíos
-  (async () => {
-    const results = [];
-    for (const { numero, mensaje, rowIndex } of lote) {
-      try {
-        const chatId = numero.includes('@c.us') ? numero : `${numero}@c.us`;
-        await client.sendMessage(chatId, mensaje);
-        results.push({ rowIndex, estado: 'OK' });
-      } catch (err) {
-        console.error(`❌ Error enviando a ${numero}:`, err);
-        results.push({ rowIndex, estado: 'ERROR', error: err.message });
-      }
-    }
-
-    // Envío de resultados de vuelta a Apps Script
+  for (const { numero, mensaje } of mensajes) {
     try {
-      await axios.post(callbackUrl, results, {
-        headers: { 'Content-Type': 'application/json' }
-      });
-      console.log('✅ Callback enviado correctamente');
+      const chatId = `${numero}@c.us`;
+      await client.sendMessage(chatId, mensaje);
+      resultados.push({ numero, mensajeOriginal: mensaje, estado: 'OK', error: null, timestamp: new Date().toISOString() });
+      console.log(`✅ Enviado a ${numero}`);
     } catch (err) {
-      console.error('❌ Error enviando callback:', err);
+      resultados.push({ numero, mensajeOriginal: mensaje, estado: 'ERROR', error: err.message, timestamp: new Date().toISOString() });
+      console.log(`❌ Error en envío a ${numero}: ${err.message}`);
     }
-  })();
+  }
+
+  console.log('📊 Resultados del lote:', resultados);
+
+  if (APPS_SCRIPT_WEBHOOK_URL) {
+    try {
+      console.log('📤 Notificando a Apps Script…');
+      await axios.post(APPS_SCRIPT_WEBHOOK_URL, { results: resultados }, {
+        headers: { 'Content-Type': 'application/json', 'x-webhook-secret': APPS_SCRIPT_WEBHOOK_SECRET },
+        timeout: 10000
+      });
+      console.log('🎉 Webhook notificado con éxito.');
+    } catch (webhookErr) {
+      console.error('🚨 Error notificando al webhook:', webhookErr.toString());
+    }
+  } else {
+    console.warn('⚠️ APPS_SCRIPT_WEBHOOK_URL no configurada.');
+  }
+}
+
+// 🔔 Endpoint para recibir y procesar lotes
+app.post('/enviarBatch', express.json(), async (req, res) => {
+  const mensajes = req.body.mensajes;
+  console.log(`🔔 /enviarBatch: ${mensajes.length} mensajes recibidos`);
+  procesarLoteEnSegundoPlano(mensajes);
+  res.status(202).send({ status: 'Procesamiento en segundo plano iniciado 🚀' });
 });
 
-// 6️⃣ Arranca el servidor
+// 🏁 Iniciar servidor
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🌐 Server corriendo en puerto ${PORT}`));
-
-
+server.listen(PORT, () => console.log(`🚀 Servidor corriendo en puerto ${PORT}`));
