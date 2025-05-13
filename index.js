@@ -1,4 +1,3 @@
-// index.js (o index_asincrono.js) - completo y corregido 🎉
 import 'dotenv/config';
 import axios from 'axios';
 import qrcode from 'qrcode';
@@ -9,21 +8,23 @@ const { Client, LocalAuth } = pkg;
 import { Server as SocketIOServer } from 'socket.io';
 
 // 🚀 Variables de entorno
-const APPS_SCRIPT_WEBHOOK_URL    = process.env.APPS_SCRIPT_WEBHOOK_URL;
+const APPS_SCRIPT_WEBHOOK_URL = process.env.APPS_SCRIPT_WEBHOOK_URL;
 const APPS_SCRIPT_WEBHOOK_SECRET = process.env.APPS_SCRIPT_WEBHOOK_SECRET;
 
 // 🔌 Inicializar Express + HTTP + Socket.IO
-const app    = express();
+const app = express();
 const server = http.createServer(app);
-const io     = new SocketIOServer(server);
+const io = new SocketIOServer(server);
 
 // 🌐 Estado de la sesión
 let isClientReady = false;
 
 // 📲 Iniciar cliente WhatsApp
-const client = new Client({ authStrategy: new LocalAuth({ dataPath: './session' }) });
+const client = new Client({ 
+  authStrategy: new LocalAuth({ dataPath: './session' }) 
+});
 
-// 🏠 Ruta raíz: muestra la página con QR y estado usando template literal
+// 🏠 Ruta raíz: muestra la página con QR y estado
 app.get('/', (req, res) => {
   res.send(`<!DOCTYPE html>
 <html>
@@ -45,7 +46,7 @@ app.get('/', (req, res) => {
   <script>
     const socket = io();
     socket.on('qr', qr => {
-      document.getElementById('qr').innerHTML = `<img src="${qr}" />`;
+      document.getElementById('qr').innerHTML = '<img src="' + qr + '" />';
       document.getElementById('status').innerText = '📥 QR recibido: ¡Escanea con tu móvil!';
     });
     socket.on('ready', () => {
@@ -62,7 +63,7 @@ app.get('/', (req, res) => {
 </html>`);
 });
 
-// 📡 Endpoint /status para verificar sesión desde Apps Script
+// 📡 Endpoint /status
 app.get('/status', (req, res) => {
   res.json({ connected: isClientReady });
 });
@@ -78,20 +79,24 @@ client.on('qr', qr => {
     io.emit('qr', url);
   });
 });
-client.on('ready', () => {
-  isClientReady = true;
-  console.log('✅ Cliente WhatsApp listo');
-  io.emit('ready');
+
+client.on('ready', () => { 
+  isClientReady = true; 
+  console.log('✅ Cliente WhatsApp listo'); 
+  io.emit('ready'); 
 });
-client.on('authenticated', () => {
-  console.log('🔐 Autenticado');
-  io.emit('authenticated');
+
+client.on('authenticated', () => { 
+  console.log('🔐 Autenticado'); 
+  io.emit('authenticated'); 
 });
-client.on('auth_failure', msg => {
-  isClientReady = false;
-  console.error('🚨 Auth failure:', msg);
-  io.emit('auth_failure', msg);
+
+client.on('auth_failure', msg => { 
+  isClientReady = false; 
+  console.error('🚨 Auth failure:', msg); 
+  io.emit('auth_failure', msg); 
 });
+
 client.initialize();
 
 /**
@@ -103,10 +108,22 @@ async function procesarLoteEnSegundoPlano(mensajes) {
   for (const { numero, mensaje } of mensajes) {
     try {
       await client.sendMessage(`${numero}@c.us`, mensaje);
-      resultados.push({ numero, mensajeOriginal: mensaje, estado: 'OK', error: null, timestamp: new Date().toISOString() });
+      resultados.push({ 
+        numero, 
+        mensajeOriginal: mensaje, 
+        estado: 'OK', 
+        error: null, 
+        timestamp: new Date().toISOString() 
+      });
       console.log(`✅ Enviado a ${numero}`);
     } catch (err) {
-      resultados.push({ numero, mensajeOriginal: mensaje, estado: 'ERROR', error: err.message, timestamp: new Date().toISOString() });
+      resultados.push({ 
+        numero, 
+        mensajeOriginal: mensaje, 
+        estado: 'ERROR', 
+        error: err.message, 
+        timestamp: new Date().toISOString() 
+      });
       console.log(`❌ Error en envío a ${numero}: ${err.message}`);
     }
   }
@@ -114,10 +131,16 @@ async function procesarLoteEnSegundoPlano(mensajes) {
 
   if (APPS_SCRIPT_WEBHOOK_URL) {
     try {
-      await axios.post(APPS_SCRIPT_WEBHOOK_URL, { results: resultados }, {
-        headers: { 'Content-Type': 'application/json', 'x-webhook-secret': APPS_SCRIPT_WEBHOOK_SECRET },
-        timeout: 10000
-      });
+      await axios.post(APPS_SCRIPT_WEBHOOK_URL, 
+        { results: resultados }, 
+        {
+          headers: { 
+            'Content-Type': 'application/json', 
+            'x-webhook-secret': APPS_SCRIPT_WEBHOOK_SECRET 
+          },
+          timeout: 10000
+        }
+      );
       console.log('🎉 Webhook notificado');
     } catch (e) {
       console.error('🚨 Error notificando webhook:', e.toString());
@@ -138,5 +161,3 @@ app.post('/enviarBatch', express.json(), async (req, res) => {
 // 🏁 Iniciar servidor
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`🚀 Servidor en puerto ${PORT}`));
-
-
