@@ -45,7 +45,7 @@ app.get('/', (req, res) => {
       <script>
         const socket = io();
         socket.on('qr', qr => {
-          document.getElementById('qr').innerHTML = `<img src="${qr}" />`;
+          document.getElementById('qr').innerHTML = '<img src="' + qr + '" />';
           document.getElementById('status').innerText = '📥 QR recibido: ¡Escanea con tu móvil!';
         });
         socket.on('ready', () => {
