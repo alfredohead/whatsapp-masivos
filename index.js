@@ -19,9 +19,18 @@ const io = new SocketIOServer(server);
 // 🌐 Estado de la sesión
 let isClientReady = false;
 
-// 📲 Iniciar cliente WhatsApp
+// 📲 Iniciar cliente WhatsApp con opciones Puppeteer mejoradas
 const client = new Client({ 
-  authStrategy: new LocalAuth({ dataPath: './session' }) 
+  authStrategy: new LocalAuth({ dataPath: './session' }),
+  puppeteer: {
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox'
+    ],
+    defaultViewport: null,
+    timeout: 60000 // 60 segundos de timeout
+  }
 });
 
 // 🏠 Ruta raíz: muestra la página con QR y estado
@@ -91,13 +100,34 @@ client.on('authenticated', () => {
   io.emit('authenticated'); 
 });
 
+// 🔄 Reintentar inicialización si falla la autenticación
 client.on('auth_failure', msg => { 
   isClientReady = false; 
   console.error('🚨 Auth failure:', msg); 
   io.emit('auth_failure', msg); 
+  client.initialize(); // reintentar
+});
+
+// 🔌 Reincializar si se desconecta
+client.on('disconnected', reason => {
+  isClientReady = false;
+  console.warn('🔌 Cliente desconectado:', reason);
+  client.initialize();
 });
 
 client.initialize();
+
+// 🛰️ Ping periódico para detectar contextos muertos
+setInterval(async () => {
+  if (client.pupPage) {
+    try {
+      await client.pupPage.title();
+    } catch (err) {
+      console.warn('🔄 Contexto muerto detectado, reiniciando cliente...');
+      client.initialize();
+    }
+  }
+}, 30_000); // cada 30 segundos
 
 /**
  * 🚀 Procesa lote en segundo plano y notifica a Apps Script
@@ -161,3 +191,4 @@ app.post('/enviarBatch', express.json(), async (req, res) => {
 // 🏁 Iniciar servidor
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`🚀 Servidor en puerto ${PORT}`));
+
