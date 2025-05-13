@@ -1,4 +1,4 @@
-// index.js (o index_asincrono.js) - con QR en web, emojis 🚀 y endpoint /status
+// index.js (o index_asincrono.js) - completo y corregido 🎉
 import 'dotenv/config';
 import axios from 'axios';
 import qrcode from 'qrcode';
@@ -11,18 +11,18 @@ import { Client, LocalAuth } from 'whatsapp-web.js';
 const APPS_SCRIPT_WEBHOOK_URL    = process.env.APPS_SCRIPT_WEBHOOK_URL;
 const APPS_SCRIPT_WEBHOOK_SECRET = process.env.APPS_SCRIPT_WEBHOOK_SECRET;
 
-// 🔌 Inicializar servidor HTTP + Express + Socket.IO
+// 🔌 Inicializar Express + HTTP + Socket.IO
 const app    = express();
 const server = http.createServer(app);
 const io     = new SocketIOServer(server);
 
-// 🌐 Mantener estado de conexión
+// 🌐 Estado de la sesión
 let isClientReady = false;
 
-// 📲 Cliente WhatsApp
+// 📲 Iniciar cliente WhatsApp
 const client = new Client({ authStrategy: new LocalAuth({ dataPath: './session' }) });
 
-// 📄 Servir página principal con QR dinámico
+// 🏠 Ruta raíz: muestra la página con QR y estado
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -33,12 +33,14 @@ app.get('/', (req, res) => {
       <style>
         body { display:flex; flex-direction:column; align-items:center; font-family:sans-serif; margin-top:50px; }
         #qr img { width:300px; }
+        button { margin-top:10px; padding:8px 12px; font-size:16px; }
       </style>
     </head>
     <body>
       <h1>📲 Escanea el QR con WhatsApp Web</h1>
       <div id="qr">⏳ Esperando QR...</div>
       <p id="status">Estado: inicializando...</p>
+      <button onclick="location.reload()">🔄 Refrescar página</button>
       <script src="/socket.io/socket.io.js"></script>
       <script>
         const socket = io();
@@ -61,14 +63,15 @@ app.get('/', (req, res) => {
   `);
 });
 
-// 📡 Endpoint de estado
+// 📡 Endpoint de estado para verificar sesión desde Apps Script
 app.get('/status', (req, res) => {
   res.json({ connected: isClientReady });
 });
 
+// 🔌 Loguear conexiones de Socket.IO
 io.on('connection', () => console.log('🔌 Frontend conectado a Socket.IO'));
 
-// 🌟 Eventos de WhatsApp Web.js
+// 🌟 Eventos del cliente WhatsApp
 client.on('qr', qr => {
   console.log('📸 QR recibido');
   qrcode.toDataURL(qr, (err, url) => {
@@ -76,24 +79,20 @@ client.on('qr', qr => {
     io.emit('qr', url);
   });
 });
-
 client.on('ready', () => {
   isClientReady = true;
   console.log('✅ Cliente WhatsApp listo');
   io.emit('ready');
 });
-
 client.on('authenticated', () => {
   console.log('🔐 Autenticado');
   io.emit('authenticated');
 });
-
 client.on('auth_failure', msg => {
   isClientReady = false;
   console.error('🚨 Auth failure:', msg);
   io.emit('auth_failure', msg);
 });
-
 client.initialize();
 
 /**
@@ -103,7 +102,6 @@ client.initialize();
 async function procesarLoteEnSegundoPlano(mensajes) {
   console.log(`📨 Iniciando procesamiento de lote: ${mensajes.length} mensajes`);
   const resultados = [];
-
   for (const { numero, mensaje } of mensajes) {
     try {
       const chatId = `${numero}@c.us`;
@@ -115,7 +113,6 @@ async function procesarLoteEnSegundoPlano(mensajes) {
       console.log(`❌ Error en envío a ${numero}: ${err.message}`);
     }
   }
-
   console.log('📊 Resultados del lote:', resultados);
 
   if (APPS_SCRIPT_WEBHOOK_URL) {
@@ -136,7 +133,7 @@ async function procesarLoteEnSegundoPlano(mensajes) {
 
 // 🔔 Endpoint para recibir y procesar lotes
 app.post('/enviarBatch', express.json(), async (req, res) => {
-  const mensajes = req.body.mensajes;
+  const mensajes = Array.isArray(req.body.mensajes) ? req.body.mensajes : [];
   console.log(`🔔 /enviarBatch: ${mensajes.length} mensajes recibidos`);
   procesarLoteEnSegundoPlano(mensajes);
   res.status(202).send({ status: 'Procesamiento en segundo plano iniciado 🚀' });
