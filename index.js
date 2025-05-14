@@ -7,180 +7,325 @@ import pkg from 'whatsapp-web.js';
 const { Client, LocalAuth } = pkg;
 import { Server as SocketIOServer } from 'socket.io';
 
+// 🎯 Constantes y configuración
+const ICONS = {
+  START: '🚀',
+  ERROR: '❌',
+  SUCCESS: '✅',
+  WARNING: '⚠️',
+  QR: '📱',
+  AUTH: '🔐',
+  DISCONNECT: '🔌',
+  MESSAGE: '📨',
+  WEBHOOK: '📡',
+  SERVER: '🖥️',
+  CLIENT: '👤',
+  BATCH: '📦',
+  INIT: '🔄'
+};
+
+// 📝 Logger mejorado
+const logger = {
+  info: (icon, message) => console.log(`${icon} ${message}`),
+  error: (icon, message, error) => console.error(`${icon} ${message}`, error || ''),
+  warn: (icon, message) => console.warn(`${icon} ${message}`),
+  success: (icon, message) => console.log(`${icon} ${message}`)
+};
+
 // 🚀 Variables de entorno
 const APPS_SCRIPT_WEBHOOK_URL = process.env.APPS_SCRIPT_WEBHOOK_URL;
 const APPS_SCRIPT_WEBHOOK_SECRET = process.env.APPS_SCRIPT_WEBHOOK_SECRET;
+const PORT = process.env.PORT || 3000;
 
 // 🔌 Inicializar Express + HTTP + Socket.IO
 const app = express();
+app.use(express.json());
 const server = http.createServer(app);
 const io = new SocketIOServer(server);
 
 // 🌐 Estado de la sesión
 let isClientReady = false;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 5;
 
-// 📲 Configurar cliente WhatsApp con Puppeteer mejorado
-t const client = new Client({
-  authStrategy: new LocalAuth({ session: { dataPath: './session' } }),
+// 📲 Configurar cliente WhatsApp
+const client = new Client({
+  authStrategy: new LocalAuth({ dataPath: './.wwebjs_auth' }),
   puppeteer: {
     headless: true,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage'
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--disable-extensions',
+      '--disable-dev-tools',
+      '--no-default-browser-check',
+      '--no-first-run',
+      '--disable-translate'
     ],
     defaultViewport: null,
-    timeout: 60000 // 60 segundos
+    timeout: 60000
   }
 });
 
-// 🏠 Ruta raíz: página QR y estado
+// 🏠 Ruta raíz: página QR
 app.get('/', (req, res) => {
   res.send(`<!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8" />
-  <title>WhatsApp QR</title>
-  <style>
-    body { display:flex; flex-direction:column; align-items:center; font-family:sans-serif; margin-top:50px; }
-    #qr img { width:300px; }
-    button { margin-top:10px; padding:8px 12px; font-size:16px; }
-  </style>
+    <meta charset="utf-8">
+    <title>WhatsApp QR</title>
+    <style>
+        body { 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            font-family: system-ui; 
+            margin-top: 50px;
+            background: #f0f2f5;
+        }
+        #qr { 
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        #qr img { 
+            width: 300px; 
+            height: 300px;
+        }
+        #status { 
+            margin: 20px 0;
+            padding: 10px 20px;
+            border-radius: 5px;
+            background: #e8f5e9;
+        }
+        button { 
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            background: #128C7E;
+            color: white;
+            transition: all 0.3s ease;
+        }
+        button:hover {
+            background: #075E54;
+        }
+    </style>
 </head>
 <body>
-  <h1>📲 Escanea el QR con WhatsApp Web</h1>
-  <div id="qr">⏳ Esperando QR...</div>
-  <p id="status">Estado: inicializando...</p>
-  <button onclick="location.reload()">🔄 Refrescar página</button>
-  <script src="/socket.io/socket.io.js"></script>
-  <script>
-    const socket = io();
-    socket.on('qr', qr => {
-      document.getElementById('qr').innerHTML = '<img src="' + qr + '" />';
-      document.getElementById('status').innerText = '📥 QR recibido';
-    });
-    socket.on('ready', () => document.getElementById('status').innerText = '✅ Conectado');
-    socket.on('authenticated', () => document.getElementById('status').innerText = '🔐 Autenticado');
-    socket.on('auth_failure', msg => document.getElementById('status').innerText = '🚨 Auth failure: ' + msg);
-    socket.on('disconnected', reason => document.getElementById('status').innerText = '🔌 Desconectado: ' + reason);
-  </script>
+    <h1>📱 WhatsApp Web QR</h1>
+    <div id="qr">⌛ Generando código QR...</div>
+    <p id="status">Iniciando...</p>
+    <button onclick="location.reload()">🔄 Actualizar</button>
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const statusEl = document.getElementById('status');
+        const qrEl = document.getElementById('qr');
+
+        socket.on('qr', qr => {
+            qrEl.innerHTML = '<img src="' + qr + '" />';
+            statusEl.innerText = '📱 Escanea el código QR';
+            statusEl.style.background = '#fff3e0';
+        });
+        socket.on('ready', () => {
+            statusEl.innerText = '✅ WhatsApp conectado';
+            statusEl.style.background = '#e8f5e9';
+            qrEl.innerHTML = '🎉 ¡Conectado!';
+        });
+        socket.on('authenticated', () => {
+            statusEl.innerText = '🔐 Autenticado';
+            statusEl.style.background = '#e8f5e9';
+        });
+        socket.on('auth_failure', msg => {
+            statusEl.innerText = '❌ Error: ' + msg;
+            statusEl.style.background = '#ffebee';
+        });
+        socket.on('disconnected', reason => {
+            statusEl.innerText = '🔌 Desconectado: ' + reason;
+            statusEl.style.background = '#fff3e0';
+        });
+    </script>
 </body>
 </html>`);
 });
 
-// 📡 Estado de conexión
-app.get('/status', (req, res) => res.json({ connected: isClientReady }));
+// 📡 Endpoint de estado
+app.get('/status', (req, res) => {
+  res.json({ 
+    connected: isClientReady,
+    reconnectAttempts,
+    maxReconnectAttempts: MAX_RECONNECT_ATTEMPTS
+  });
+});
 
-// 🔌 Socket.IO
-io.on('connection', () => console.log('🔌 Frontend conectado'));
+// 🔌 Socket.IO connection
+io.on('connection', () => {
+  logger.info(ICONS.CLIENT, 'Cliente web conectado');
+});
 
-// 🌟 Eventos de cliente WhatsApp
+// 🤖 Eventos WhatsApp
 client.on('qr', async qr => {
-  console.log('📸 QR recibido');
-  const url = await qrcode.toDataURL(qr).catch(err => { console.error('❌ QR error:', err); });
-  io.emit('qr', url);
+  logger.info(ICONS.QR, 'Nuevo código QR generado');
+  try {
+    const qrUrl = await qrcode.toDataURL(qr);
+    io.emit('qr', qrUrl);
+  } catch (err) {
+    logger.error(ICONS.ERROR, 'Error generando QR:', err);
+  }
 });
 
 client.on('ready', () => {
   isClientReady = true;
-  console.log('✅ Cliente listo');
+  reconnectAttempts = 0;
+  logger.success(ICONS.SUCCESS, 'Cliente WhatsApp listo');
   io.emit('ready');
 });
 
 client.on('authenticated', () => {
-  console.log('🔐 Autenticado');
+  logger.success(ICONS.AUTH, 'WhatsApp autenticado');
   io.emit('authenticated');
 });
 
 client.on('auth_failure', msg => {
   isClientReady = false;
-  console.error('🚨 Auth failure:', msg);
+  logger.error(ICONS.ERROR, 'Error de autenticación:', msg);
   io.emit('auth_failure', msg);
-  // Reinicializar después de fallo
-  setTimeout(() => initializeClient(), 10000);
 });
 
 client.on('disconnected', reason => {
   isClientReady = false;
-  console.warn('🔌 Desconectado:', reason);
+  logger.warn(ICONS.DISCONNECT, `WhatsApp desconectado: ${reason}`);
   io.emit('disconnected', reason);
-  setTimeout(() => initializeClient(), 5000);
+  
+  if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+    reconnectAttempts++;
+    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+    logger.info(ICONS.INIT, `Reintentando conexión ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} en ${delay/1000}s...`);
+    setTimeout(initializeClient, delay);
+  } else {
+    logger.error(ICONS.ERROR, 'Máximo número de intentos de reconexión alcanzado');
+  }
 });
 
-// 🚨 Capturar promesas no manejadas
-process.on('unhandledRejection', reason => {
-  console.error('Unhandled Rejection:', reason);
-  setTimeout(() => initializeClient(), 10000);
-});
-
-/**
- * Inicializar cliente con reintentos
- */
+// 🔄 Función de inicialización mejorada
 async function initializeClient() {
   try {
+    logger.info(ICONS.INIT, 'Iniciando cliente WhatsApp...');
     await client.initialize();
   } catch (err) {
-    console.error('❌ Error en initialize():', err);
-    setTimeout(() => initializeClient(), 10000);
+    logger.error(ICONS.ERROR, 'Error inicializando cliente:', err);
+    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+      reconnectAttempts++;
+      const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+      logger.info(ICONS.INIT, `Reintentando en ${delay/1000}s...`);
+      setTimeout(initializeClient, delay);
+    }
   }
 }
 
-// Arrancar la inicialización
-eninitializeClient();
+// 📨 Procesamiento de mensajes mejorado
+async function procesarLoteEnSegundoPlano(mensajes) {
+  logger.info(ICONS.BATCH, `Procesando lote de ${mensajes.length} mensajes`);
+  const results = [];
 
-/**
- * Ping periódico para asegurar contexto vivo
- */
+  for (const { numero, mensaje } of mensajes) {
+    try {
+      await client.sendMessage(`${numero}@c.us`, mensaje);
+      results.push({
+        numero,
+        estado: 'OK',
+        error: null,
+        timestamp: new Date().toISOString()
+      });
+      logger.success(ICONS.MESSAGE, `Mensaje enviado a ${numero}`);
+      // Añadir delay entre mensajes para evitar bloqueos
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    } catch (err) {
+      results.push({
+        numero,
+        estado: 'ERROR',
+        error: err.message,
+        timestamp: new Date().toISOString()
+      });
+      logger.error(ICONS.ERROR, `Error enviando a ${numero}:`, err.message);
+    }
+  }
+
+  if (APPS_SCRIPT_WEBHOOK_URL) {
+    try {
+      await axios.post(
+        APPS_SCRIPT_WEBHOOK_URL, 
+        { results },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'x-webhook-secret': APPS_SCRIPT_WEBHOOK_SECRET
+          },
+          timeout: 10000
+        }
+      );
+      logger.success(ICONS.WEBHOOK, 'Webhook notificado exitosamente');
+    } catch (err) {
+      logger.error(ICONS.ERROR, 'Error notificando webhook:', err.message);
+    }
+  }
+  
+  return results;
+}
+
+// 📨 Endpoint para envío de mensajes mejorado
+app.post('/enviarBatch', async (req, res) => {
+  const mensajes = Array.isArray(req.body.mensajes) ? req.body.mensajes : [];
+  
+  if (!mensajes.length) {
+    logger.warn(ICONS.WARNING, 'Intento de envío sin mensajes');
+    return res.status(400).json({ error: 'No hay mensajes para procesar' });
+  }
+  
+  if (!isClientReady) {
+    logger.warn(ICONS.WARNING, 'Intento de envío con WhatsApp desconectado');
+    return res.status(503).json({ error: 'WhatsApp no está conectado' });
+  }
+
+  logger.info(ICONS.BATCH, `Recibido lote de ${mensajes.length} mensajes`);
+  procesarLoteEnSegundoPlano(mensajes);
+  res.status(202).json({ 
+    status: 'Procesando mensajes',
+    batch_size: mensajes.length,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// 🚀 Iniciar servidor
+server.listen(PORT, () => {
+  logger.success(ICONS.SERVER, `Servidor iniciado en puerto ${PORT}`);
+  initializeClient();
+});
+
+// 🔄 Monitor de conexión mejorado
 setInterval(async () => {
-  if (client?.pupPage) {
+  if (isClientReady && client?.pupPage) {
     try {
       await client.pupPage.title();
     } catch (err) {
-      console.warn('🔄 Contexto muerto, reiniciando cliente');
+      logger.warn(ICONS.WARNING, 'Conexión perdida, reiniciando...');
+      isClientReady = false;
       initializeClient();
     }
   }
 }, 30000);
 
-/**
- * Procesar lote y notificar webhook
- */
-async function procesarLoteEnSegundoPlano(mensajes) {
-  console.log(`📨 Lote ${mensajes.length}`);
-  const results = [];
-  for (const { numero, mensaje } of mensajes) {
-    try {
-      await client.sendMessage(`${numero}@c.us`, mensaje);
-      results.push({ numero, estado: 'OK', error: null, timestamp: new Date().toISOString() });
-      console.log(`✅ ${numero}`);
-    } catch (err) {
-      results.push({ numero, estado: 'ERROR', error: err.message, timestamp: new Date().toISOString() });
-      console.error(`❌ ${numero}:`, err);
-    }
-  }
-  if (APPS_SCRIPT_WEBHOOK_URL) {
-    try {
-      await axios.post(APPS_SCRIPT_WEBHOOK_URL, { results }, {
-        headers: { 'Content-Type': 'application/json', 'x-webhook-secret': APPS_SCRIPT_WEBHOOK_SECRET },
-        timeout: 10000
-      });
-      console.log('🎉 Webhook ok');
-    } catch (e) {
-      console.error('🚨 Webhook error:', e);
-    }
-  }
-}
-
-// 🔔 Recepción de lote
-app.post('/enviarBatch', express.json(), (req, res) => {
-  const mensajes = Array.isArray(req.body.mensajes) ? req.body.mensajes : [];
-  console.log(`🔔 /enviarBatch ${mensajes.length}`);
-  procesarLoteEnSegundoPlano(mensajes);
-  res.status(202).send({ status: 'Iniciado' });
+// 🚨 Manejo de errores no capturados
+process.on('uncaughtException', (err) => {
+  logger.error(ICONS.ERROR, 'Error no capturado:', err);
 });
 
-// 🏁 Iniciar servidor
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`🚀 en puerto ${PORT}`));
-
+process.on('unhandledRejection', (reason) => {
+  logger.error(ICONS.ERROR, 'Promesa rechazada no manejada:', reason);
+});
 
