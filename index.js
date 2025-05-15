@@ -71,8 +71,24 @@ client.on('disconnected', reason => {
 
 async function initializeClient() {
   try {
-    await client.destroy();
+    if (client.pupBrowser && client.pupPage && !client.pupPage.isClosed()) {
+      console.log(`[${new Date().toISOString()}] 🧹 Cerrando instancia activa de cliente...`);
+      await client.destroy();
+      console.log(`[${new Date().toISOString()}] ✔️ Cliente destruido correctamente.`);
+    } else {
+      console.log(`[${new Date().toISOString()}] ℹ️ No hay instancia activa de cliente para destruir.`);
+    }
   } catch (e) {
+    console.warn(`[${new Date().toISOString()}] ⚠️ No se pudo destruir el cliente previo:`, e.message);
+  }
+  try {
+    console.log(`[${new Date().toISOString()}] 🚀 Inicializando cliente...`);
+    await client.initialize();
+  } catch (err) {
+    console.error(`[${new Date().toISOString()}] ❌ Error al inicializar cliente:`, err);
+    setTimeout(() => initializeClient(), 10000);
+  }
+} catch (e) {
     console.warn(`[${new Date().toISOString()}] ⚠️ No se pudo destruir el cliente previo:`, e.message);
   }
   try {
@@ -164,4 +180,5 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`[${new Date().toISOString()}] 🚀 Servidor escuchando en puerto ${PORT}`);
 });
+
 
