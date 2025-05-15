@@ -175,32 +175,36 @@ async function procesarLoteEnSegundoPlano(mensajes) {
   for (let i = 0; i < mensajes.length; i++) {
     const { numero, mensaje } = mensajes[i];
     let currentState = 'UNKNOWN';
+    console.log(`[${new Date().toISOString()}] 🌀 [${i + 1}/${mensajes.length}] Intentando obtener estado del cliente para ${numero}...`);
     try {
-      currentState = await client.getState();
+      const getStatePromise = client.getState();
+      const timeoutStatePromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Timeout (15s): client.getState() tardó demasiado.')), 15000) // 15 segundos timeout
+      );
+      currentState = await Promise.race([getStatePromise, timeoutStatePromise]);
+      console.log(`[${new Date().toISOString()}] ℹ️ [${i + 1}/${mensajes.length}] Estado del cliente ANTES de enviar a ${numero}: ${currentState}`);
     } catch (stateError) {
-      console.error(`[${new Date().toISOString()}] 🆘 [${i + 1}/${mensajes.length}] Error GRAVE obteniendo estado del cliente para ${numero}: ${stateError.message}`);
+      console.error(`[${new Date().toISOString()}] 🆘 [${i + 1}/${mensajes.length}] Error obteniendo estado del cliente para ${numero}: ${stateError.message}`);
       currentState = 'ERROR_GETTING_STATE';
     }
 
-    console.log(`[${new Date().toISOString()}] ℹ️ [${i + 1}/${mensajes.length}] Estado del cliente ANTES de enviar a ${numero}: ${currentState}`);
     console.log(`[${new Date().toISOString()}] 💬 [${i + 1}/${mensajes.length}] Intentando enviar a ${numero}. Mensaje: "${mensaje.substring(0, 30)}..."`);
     
     if (currentState !== 'CONNECTED') {
       console.warn(`[${new Date().toISOString()}] ⚠️ [${i + 1}/${mensajes.length}] Cliente NO conectado (estado: ${currentState}). Saltando envío a ${numero}.`);
       results.push({ numero, estado: 'ERROR', error: `Cliente WhatsApp no conectado (estado: ${currentState})`, timestamp: new Date().toISOString() });
       mensajesConError++;
-      // Si el estado no es CONNECTED, y no hay navegador, es un problema serio, intentar reinicio.
-      if (!client.pupBrowser && currentState !== 'INITIALIZING' && currentState !== 'QR_CODE') {
-          console.error(`[${new Date().toISOString()}] 🆘 [${i + 1}/${mensajes.length}] El navegador de Puppeteer NO existe y el cliente no está conectado ni inicializando. Intentando reinicialización completa.`);
+      if (!client.pupBrowser && currentState !== 'INITIALIZING' && currentState !== 'QR_CODE' && currentState !== 'AUTHENTICATING') {
+          console.error(`[${new Date().toISOString()}] 🆘 [${i + 1}/${mensajes.length}] El navegador de Puppeteer NO existe y el cliente no está conectado ni inicializando (estado: ${currentState}). Intentando reinicialización completa.`);
           await initializeClient();
       }
-      continue; // Saltar al siguiente mensaje
+      continue; 
     }
 
     try {
       const sendPromise = client.sendMessage(`${numero}@c.us`, mensaje);
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`Timeout: El envío a ${numero} tardó más de 45 segundos.`)), 45000)
+        setTimeout(() => reject(new Error(`Timeout (45s): El envío a ${numero} tardó demasiado.`)), 45000)
       );
 
       await Promise.race([sendPromise, timeoutPromise]);
@@ -213,7 +217,6 @@ async function procesarLoteEnSegundoPlano(mensajes) {
       console.error(`[${new Date().toISOString()}] ❌ [${i + 1}/${mensajes.length}] ¡ERROR! Enviando a ${numero}: ${err.message}`);
       mensajesConError++;
     }
-    // Pausa opcional para no saturar (descomentar si es necesario)
     // console.log(`[${new Date().toISOString()}] ⏱️ Pausa de 1 segundo...`);
     // await new Promise(resolve => setTimeout(resolve, 1000));
   }
@@ -248,8 +251,6 @@ app.post('/enviarBatch', express.json(), (req, res) => {
     return res.status(400).send({ status: 'Error', message: 'No hay mensajes para procesar' });
   }
 
-  // Verificación rápida del estado del cliente antes de aceptar la tarea
-  // Usamos isClientReady como una primera barrera, el chequeo detallado está en procesarLoteEnSegundoPlano
   if (!isClientReady) {
     console.warn(`[${new Date().toISOString()}] ⚠️ Cliente WhatsApp no listo (isClientReady=false). Solicitud a /enviarBatch rechazada temporalmente.`);
     return res.status(503).send({ status: 'Error', message: 'Servicio no disponible temporalmente, cliente WhatsApp no listo.' });
@@ -269,6 +270,8 @@ server.listen(PORT, () => {
     console.warn(`[${new Date().toISOString()}] ⚠️ Webhook de Apps Script (APPS_SCRIPT_WEBHOOK_URL) no configurado.`);
   }
 });
+
+
 
 
 
